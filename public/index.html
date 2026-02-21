@@ -825,15 +825,30 @@ function startRecording() {
   mediaRecorder = new MediaRecorder(audioStream, { mimeType });
   mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordingChunks.push(e.data); };
   mediaRecorder.onstop = handleRecordingStop;
-  mediaRecorder.start(100); // collect in 100ms chunks
+  mediaRecorder.start(250); // collect in 250ms chunks
   isRecording = true;
 
   setOrb('listening');
-  setStatus('active', 'Listening...');
+  setStatus('active', 'Listening... (speak now)');
   document.getElementById('ringSpin').classList.add('visible');
   startVolViz();
 
-  // Silence detection — stop after 2.5s of low volume
+  // Countdown display
+  let secs = 8;
+  const countEl = document.getElementById('statusTagText');
+  const countInterval = setInterval(() => {
+    secs--;
+    if (secs > 0 && isRecording) countEl.innerHTML = `<div class="blink"></div> Listening... ${secs}s`;
+    else clearInterval(countInterval);
+  }, 1000);
+
+  // Hard cap: stop after 8 seconds no matter what
+  silenceTimer = setTimeout(() => {
+    clearInterval(countInterval);
+    if (isRecording) stopRecording();
+  }, 8000);
+
+  // Silence detection — stop after ~1.5s of low volume
   startSilenceDetection();
 }
 
@@ -851,8 +866,8 @@ function startSilenceDetection() {
   const bufferLength = analyser.frequencyBinCount;
   const dataArray = new Uint8Array(bufferLength);
   let silentFrames = 0;
-  const SILENCE_THRESHOLD = 10;
-  const SILENCE_FRAMES = 35; // ~2.3s at 60fps
+  const SILENCE_THRESHOLD = 8;
+  const SILENCE_FRAMES = 22; // ~1.5s at 60fps
 
   function checkSilence() {
     if (!isRecording) return;
