@@ -1,0 +1,28 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="Eslint" enabled="true" level="WARNING" enabled_by_default="true" />
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredPackages">
+        <list>
+          <option value="fiftyone" />
+          <option value="numpy" />
+          <option value="pycocotools" />
+          <option value="torch" />
+          <option value="gdown" />
+          <option value="transformers" />
+          <option value="open-clip-torch" />
+          <option value="accelerate" />
+          <option value="einops" />
+          <option value="pyvips-binary" />
+          <option value="pyvips" />
+          <option value="pillow" />
+          <option value="umap-learn" />
+          <option value="ultralytics" />
+          <option value="qwen-vl-utils" />
+          <option value="hf-xet" />
+        </list>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>

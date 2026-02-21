@@ -1,0 +1,1152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Aria — Voice Scheduler</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #080b12;
+  --surface: #0e1420;
+  --border: rgba(255,255,255,0.06);
+  --blue: #4f8ef7;
+  --blue-glow: rgba(79,142,247,0.18);
+  --teal: #38d9c0;
+  --teal-glow: rgba(56,217,192,0.15);
+  --text: #e8eaf0;
+  --muted: #5a6070;
+  --dim: #2a3040;
+}
+
+html, body { height: 100%; background: var(--bg); color: var(--text); overflow: hidden; }
+
+/* BG grid */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image:
+    linear-gradient(rgba(79,142,247,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(79,142,247,0.03) 1px, transparent 1px);
+  background-size: 48px 48px;
+  pointer-events: none;
+}
+
+/* ── LAYOUT ─────────────────────────────────────────────────── */
+.app {
+  height: 100vh;
+  display: grid;
+  grid-template-columns: 340px 1fr;
+}
+
+/* ── SIDEBAR ─────────────────────────────────────────────────── */
+.sidebar {
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 2rem 1.75rem;
+  gap: 2rem;
+  overflow-y: auto;
+  background: var(--surface);
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.logo-dot {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: conic-gradient(from 180deg, var(--blue), var(--teal), var(--blue));
+  animation: spin 8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.logo-text {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.logo-sub {
+  font-family: 'Space Mono', monospace;
+  font-size: 0.55rem;
+  color: var(--muted);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  margin-top: 0.1rem;
+}
+
+/* Progress steps */
+.steps-label {
+  font-family: 'Space Mono', monospace;
+  font-size: 0.55rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.75rem;
+}
+
+.steps { display: flex; flex-direction: column; }
+
+.step {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border);
+  transition: all 0.4s ease;
+  opacity: 0.35;
+}
+.step:last-child { border-bottom: none; }
+.step.active { opacity: 1; }
+.step.done { opacity: 0.6; }
+
+.step-pip {
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  border: 1.5px solid var(--muted);
+  display: grid; place-items: center;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+  transition: all 0.4s ease;
+  font-size: 0.55rem;
+  color: var(--muted);
+  font-family: 'Space Mono', monospace;
+}
+.step.active .step-pip {
+  border-color: var(--blue);
+  color: var(--blue);
+  box-shadow: 0 0 10px var(--blue-glow);
+}
+.step.done .step-pip {
+  background: var(--teal);
+  border-color: var(--teal);
+  color: var(--bg);
+}
+
+.step-body {}
+.step-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  margin-bottom: 0.2rem;
+}
+.step-detail {
+  font-family: 'Space Mono', monospace;
+  font-size: 0.6rem;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.step.active .step-detail { color: var(--blue); }
+.step.done .step-detail { color: var(--teal); }
+
+/* Auth block */
+.auth-block {
+  margin-top: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1rem;
+}
+
+.auth-status {
+  font-family: 'Space Mono', monospace;
+  font-size: 0.6rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.auth-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+}
+.auth-dot.connected { background: var(--teal); box-shadow: 0 0 6px var(--teal-glow); }
+.auth-dot.error { background: #f07; }
+
+.auth-link {
+  display: inline-block;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.58rem;
+  color: var(--blue);
+  text-decoration: none;
+  letter-spacing: 0.05em;
+  border: 1px solid rgba(79,142,247,0.3);
+  padding: 0.4rem 0.8rem;
+  border-radius: 2px;
+  transition: all 0.2s;
+  width: 100%;
+  text-align: center;
+}
+.auth-link:hover { background: var(--blue-glow); }
+
+/* ── MAIN ─────────────────────────────────────────────────────── */
+.main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2.5rem;
+  padding: 2rem;
+  position: relative;
+}
+
+/* Ambient glow behind orb */
+.main::before {
+  content: '';
+  position: absolute;
+  width: 400px; height: 400px;
+  background: radial-gradient(circle, var(--blue-glow) 0%, transparent 70%);
+  border-radius: 50%;
+  pointer-events: none;
+  transition: opacity 0.5s;
+  opacity: 0.5;
+}
+.main.active-call::before { opacity: 1; }
+
+/* ORB */
+.orb-area {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.orb-rings {
+  position: absolute;
+  width: 200px; height: 200px;
+  pointer-events: none;
+}
+
+.ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid rgba(79,142,247,0.12);
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+}
+.ring:nth-child(1) { width: 190px; height: 190px; }
+.ring:nth-child(2) { width: 230px; height: 230px; border-color: rgba(79,142,247,0.07); }
+.ring:nth-child(3) { width: 280px; height: 280px; border-color: rgba(79,142,247,0.04); }
+
+/* Animated ring when active */
+.ring-spin {
+  position: absolute;
+  width: 200px; height: 200px;
+  border-radius: 50%;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  border: 1.5px solid transparent;
+  border-top-color: var(--blue);
+  border-right-color: rgba(79,142,247,0.3);
+  animation: ring-spin 2s linear infinite;
+  opacity: 0;
+  transition: opacity 0.4s;
+}
+.ring-spin.visible { opacity: 1; }
+@keyframes ring-spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
+
+.orb {
+  width: 120px; height: 120px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 32%,
+    #6ba4ff 0%,
+    #4f8ef7 30%,
+    #2355c7 65%,
+    #0d1a4a 100%
+  );
+  box-shadow:
+    0 0 40px rgba(79,142,247,0.2),
+    0 0 80px rgba(79,142,247,0.08),
+    0 20px 60px rgba(0,0,0,0.5),
+    inset 0 1px 1px rgba(255,255,255,0.15),
+    inset 0 -15px 30px rgba(0,0,0,0.4);
+  cursor: pointer;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  position: relative;
+  z-index: 2;
+  display: grid; place-items: center;
+  user-select: none;
+}
+
+.orb:hover:not(.disabled) {
+  transform: scale(1.05);
+  box-shadow: 0 0 60px rgba(79,142,247,0.35), 0 20px 60px rgba(0,0,0,0.5), inset 0 1px 1px rgba(255,255,255,0.15), inset 0 -15px 30px rgba(0,0,0,0.4);
+}
+
+.orb.listening {
+  animation: orb-listen 1.8s ease-in-out infinite;
+}
+@keyframes orb-listen {
+  0%,100% { box-shadow: 0 0 40px rgba(79,142,247,0.2), 0 20px 60px rgba(0,0,0,0.5), inset 0 1px 1px rgba(255,255,255,0.15), inset 0 -15px 30px rgba(0,0,0,0.4); }
+  50% { box-shadow: 0 0 70px rgba(79,142,247,0.5), 0 20px 60px rgba(0,0,0,0.5), inset 0 1px 1px rgba(255,255,255,0.15), inset 0 -15px 30px rgba(0,0,0,0.4); }
+}
+
+.orb.speaking {
+  background: radial-gradient(circle at 38% 32%,
+    #5effd8 0%,
+    #38d9c0 30%,
+    #1a8a78 65%,
+    #052520 100%
+  );
+  box-shadow: 0 0 60px rgba(56,217,192,0.35), 0 20px 60px rgba(0,0,0,0.5), inset 0 1px 1px rgba(255,255,255,0.2), inset 0 -15px 30px rgba(0,0,0,0.4);
+  animation: orb-speak 0.5s ease-in-out infinite alternate;
+}
+@keyframes orb-speak {
+  from { transform: scale(1); }
+  to { transform: scale(1.04); }
+}
+
+.orb.processing {
+  animation: orb-process 1s ease-in-out infinite;
+}
+@keyframes orb-process {
+  0%,100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(0.97); opacity: 0.8; }
+}
+
+.orb-icon { width: 36px; height: 36px; fill: rgba(255,255,255,0.8); filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4)); transition: all 0.3s; }
+
+/* Volume bar */
+.vol-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 30px;
+  position: absolute;
+  bottom: -40px;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.vol-bars.active { opacity: 1; }
+.vol-bar {
+  width: 4px;
+  background: var(--blue);
+  border-radius: 2px;
+  height: 4px;
+  transition: height 0.08s ease;
+}
+
+/* STATUS */
+.status-area { text-align: center; }
+
+.status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 0.35rem 1rem;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.75rem;
+  transition: all 0.3s;
+}
+
+.status-tag.active {
+  border-color: rgba(79,142,247,0.4);
+  color: var(--blue);
+  background: rgba(79,142,247,0.05);
+}
+.status-tag.speaking-tag {
+  border-color: rgba(56,217,192,0.4);
+  color: var(--teal);
+  background: rgba(56,217,192,0.05);
+}
+
+.blink {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: blink 1s ease-in-out infinite;
+}
+@keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.2; } }
+
+.status-message {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 1.5rem;
+  font-weight: 300;
+  font-style: italic;
+  color: rgba(232,234,240,0.7);
+  min-height: 2rem;
+  transition: all 0.3s;
+}
+
+/* TRANSCRIPT */
+.transcript {
+  width: 100%;
+  max-width: 500px;
+  min-height: 90px;
+  max-height: 160px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1rem 1.25rem;
+}
+
+.transcript::-webkit-scrollbar { width: 3px; }
+.transcript::-webkit-scrollbar-thumb { background: var(--dim); border-radius: 2px; }
+
+.t-line {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 0.6rem;
+  animation: t-in 0.25s ease;
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+@keyframes t-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+
+.t-who {
+  font-family: 'Space Mono', monospace;
+  font-size: 0.52rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding-top: 0.3em;
+  min-width: 40px;
+  flex-shrink: 0;
+}
+.t-line.aria .t-who { color: var(--teal); }
+.t-line.user .t-who { color: var(--blue); }
+.t-line.aria .t-text { color: var(--text); }
+.t-line.user .t-text { color: rgba(232,234,240,0.6); }
+
+.t-interim {
+  font-family: 'Space Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--muted);
+  padding: 0.5rem 0.25rem;
+  font-style: italic;
+  min-height: 1.5em;
+}
+
+/* BUTTONS */
+.btn-row { display: flex; gap: 0.75rem; }
+
+.btn {
+  font-family: 'Space Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 0.7rem 1.8rem;
+  border-radius: 2px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-start {
+  background: var(--blue);
+  color: #fff;
+  box-shadow: 0 0 20px var(--blue-glow);
+}
+.btn-start:hover { background: #6b9ff7; box-shadow: 0 0 30px rgba(79,142,247,0.4); }
+
+.btn-stop {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--dim);
+}
+.btn-stop:hover { color: var(--text); border-color: var(--muted); }
+
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* EVENT CARD */
+.event-card {
+  display: none;
+  width: 100%;
+  max-width: 500px;
+  background: var(--surface);
+  border: 1px solid rgba(56,217,192,0.3);
+  border-radius: 4px;
+  padding: 1.25rem 1.5rem;
+  box-shadow: 0 0 30px rgba(56,217,192,0.06);
+  animation: card-in 0.5s ease;
+}
+.event-card.show { display: block; }
+@keyframes card-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+.event-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.event-check {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: rgba(56,217,192,0.15);
+  border: 1px solid var(--teal);
+  display: grid; place-items: center;
+  flex-shrink: 0;
+}
+.event-check svg { width: 14px; height: 14px; fill: var(--teal); }
+
+.event-card-title {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.event-rows { display: flex; flex-direction: column; gap: 0; }
+
+.event-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.7rem;
+}
+.event-row:last-of-type { border-bottom: none; }
+.event-key {
+  font-family: 'Space Mono', monospace;
+  font-size: 0.52rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.event-val { color: var(--text); font-weight: 400; }
+.event-val.highlight { color: var(--teal); }
+
+.event-open {
+  display: inline-block;
+  margin-top: 1rem;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.55rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--teal);
+  text-decoration: none;
+  border: 1px solid rgba(56,217,192,0.3);
+  padding: 0.4rem 1rem;
+  border-radius: 2px;
+  transition: all 0.2s;
+}
+.event-open:hover { background: rgba(56,217,192,0.08); }
+
+/* ERROR TOAST */
+.toast {
+  position: fixed;
+  bottom: 2rem;
+  left: 50%;
+  transform: translateX(-50%) translateY(80px);
+  background: #1a0a0a;
+  border: 1px solid rgba(240,70,90,0.4);
+  color: #f04;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.6rem;
+  padding: 0.75rem 1.5rem;
+  border-radius: 2px;
+  transition: transform 0.3s ease;
+  white-space: nowrap;
+  z-index: 100;
+}
+.toast.show { transform: translateX(-50%) translateY(0); }
+
+/* Mobile */
+@media (max-width: 720px) {
+  .app { grid-template-columns: 1fr; }
+  .sidebar { display: none; }
+  .main { padding: 1.5rem; }
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div>
+      <div class="logo">
+        <div class="logo-dot"></div>
+        <div>
+          <div class="logo-text">Aria</div>
+          <div class="logo-sub">Voice Scheduler</div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="steps-label">Session Progress</div>
+      <div class="steps" id="stepsList">
+        <div class="step active" data-step="1">
+          <div class="step-pip">1</div>
+          <div class="step-body">
+            <div class="step-title">Your Name</div>
+            <div class="step-detail" id="step1-detail">Waiting...</div>
+          </div>
+        </div>
+        <div class="step" data-step="2">
+          <div class="step-pip">2</div>
+          <div class="step-body">
+            <div class="step-title">Date & Time</div>
+            <div class="step-detail" id="step2-detail">—</div>
+          </div>
+        </div>
+        <div class="step" data-step="3">
+          <div class="step-pip">3</div>
+          <div class="step-body">
+            <div class="step-title">Meeting Title</div>
+            <div class="step-detail" id="step3-detail">—</div>
+          </div>
+        </div>
+        <div class="step" data-step="4">
+          <div class="step-pip">4</div>
+          <div class="step-body">
+            <div class="step-title">Confirm & Book</div>
+            <div class="step-detail" id="step4-detail">—</div>
+          </div>
+        </div>
+        <div class="step" data-step="5">
+          <div class="step-pip">✓</div>
+          <div class="step-body">
+            <div class="step-title">Event Created</div>
+            <div class="step-detail" id="step5-detail">—</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="auth-block">
+      <div class="auth-status">
+        <div class="auth-dot" id="authDot"></div>
+        <span id="authText">Google Calendar not connected</span>
+      </div>
+      <a href="/api/auth/google" class="auth-link" id="authLink">Connect Google Calendar →</a>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main" id="mainArea">
+    <!-- ORB -->
+    <div class="orb-area">
+      <div class="orb-rings">
+        <div class="ring"></div>
+        <div class="ring"></div>
+        <div class="ring"></div>
+        <div class="ring-spin" id="ringSpin"></div>
+      </div>
+      <div class="orb" id="orb" onclick="toggleCall()">
+        <!-- mic icon -->
+        <svg class="orb-icon" id="orbIcon" viewBox="0 0 24 24">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3zm-1 3a1 1 0 0 1 2 0v8a1 1 0 0 1-2 0V4zM7 11H5a7 7 0 0 0 6 6.93V20H9v2h6v-2h-2v-2.07A7 7 0 0 0 19 11h-2a5 5 0 0 1-10 0z"/>
+        </svg>
+      </div>
+      <div class="vol-bars" id="volBars">
+        <div class="vol-bar" id="vb1"></div>
+        <div class="vol-bar" id="vb2"></div>
+        <div class="vol-bar" id="vb3"></div>
+        <div class="vol-bar" id="vb4"></div>
+        <div class="vol-bar" id="vb5"></div>
+      </div>
+    </div>
+
+    <!-- STATUS -->
+    <div class="status-area">
+      <div class="status-tag" id="statusTag">
+        <span id="statusTagText">Ready</span>
+      </div>
+      <div class="status-message" id="statusMsg">Click the orb to speak with Aria</div>
+    </div>
+
+    <!-- TRANSCRIPT -->
+    <div class="transcript" id="transcript">
+      <div class="t-line aria">
+        <span class="t-who">Aria</span>
+        <span class="t-text">Hello! I'm ready to help you schedule a meeting. Click the orb and start talking.</span>
+      </div>
+      <div class="t-interim" id="interim"></div>
+    </div>
+
+    <!-- BUTTONS -->
+    <div class="btn-row" id="btnRow">
+      <button class="btn btn-start" id="mainBtn" onclick="toggleCall()">Start Session</button>
+    </div>
+
+    <!-- EVENT CARD -->
+    <div class="event-card" id="eventCard">
+      <div class="event-card-header">
+        <div class="event-check">
+          <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
+        </div>
+        <div class="event-card-title">Event Booked Successfully</div>
+      </div>
+      <div class="event-rows" id="eventRows"></div>
+      <a href="#" id="calLink" class="event-open" target="_blank">Open in Google Calendar →</a>
+    </div>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════
+let sessionActive = false;
+let mediaRecorder = null;
+let audioStream = null;
+let recordingChunks = [];
+let isRecording = false;
+let isSpeaking = false;
+let isProcessing = false;
+let silenceTimer = null;
+let audioContext = null;
+let analyser = null;
+let volInterval = null;
+let messages = []; // full conversation history for GPT
+let currentStep = 1;
+let calendarConnected = false;
+let bookingData = null;
+
+// ═══════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════
+window.addEventListener('DOMContentLoaded', () => {
+  checkAuth();
+});
+
+function checkAuth() {
+  const params = new URLSearchParams(window.location.search);
+  const authDot = document.getElementById('authDot');
+  const authText = document.getElementById('authText');
+  const authLink = document.getElementById('authLink');
+
+  if (params.get('auth') === 'success') {
+    calendarConnected = true;
+    authDot.classList.add('connected');
+    authText.textContent = 'Google Calendar connected';
+    authLink.textContent = 'Reconnect →';
+    window.history.replaceState({}, '', '/');
+  } else if (params.get('auth') === 'error') {
+    authDot.classList.add('error');
+    authText.textContent = 'Connection failed — try again';
+    window.history.replaceState({}, '', '/');
+  } else {
+    // Check cookie existence via a light request
+    fetch('/api/book', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({_check: true}) })
+      .then(r => {
+        if (r.status !== 401) {
+          calendarConnected = true;
+          authDot.classList.add('connected');
+          authText.textContent = 'Google Calendar connected';
+          authLink.textContent = 'Reconnect →';
+        }
+      }).catch(() => {});
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// TOGGLE CALL
+// ═══════════════════════════════════════════════════════
+async function toggleCall() {
+  if (sessionActive) {
+    endSession();
+  } else {
+    await startSession();
+  }
+}
+
+async function startSession() {
+  try {
+    audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch (err) {
+    showToast('Microphone access denied. Please allow mic and refresh.');
+    return;
+  }
+
+  sessionActive = true;
+  messages = [];
+  currentStep = 1;
+  bookingData = null;
+
+  document.getElementById('mainArea').classList.add('active-call');
+  document.getElementById('transcript').innerHTML = '<div class="t-interim" id="interim"></div>';
+  document.getElementById('eventCard').classList.remove('show');
+
+  setBtn('end');
+  setOrb('idle');
+  setStatus('active', 'Connected');
+
+  // Setup audio analyser for volume viz
+  setupAnalyser(audioStream);
+
+  // Kick off with Aria's greeting
+  await ariaSpeak("Hi there! I'm Aria, your scheduling assistant. I'm here to help you book a calendar event. Could you start by telling me your name?");
+  addTranscript('aria', "Hi there! I'm Aria, your scheduling assistant. I'm here to help you book a calendar event. Could you start by telling me your name?");
+
+  // Start listening after greeting
+}
+
+function endSession() {
+  sessionActive = false;
+  stopRecording();
+  if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
+  clearVolViz();
+  document.getElementById('mainArea').classList.remove('active-call');
+  setOrb('idle');
+  setStatus('idle', 'Session ended');
+  setBtn('start');
+  document.getElementById('ringSpin').classList.remove('visible');
+}
+
+// ═══════════════════════════════════════════════════════
+// RECORDING
+// ═══════════════════════════════════════════════════════
+function startRecording() {
+  if (isRecording || isSpeaking || isProcessing || !sessionActive) return;
+
+  recordingChunks = [];
+  const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+    ? 'audio/webm;codecs=opus'
+    : 'audio/webm';
+
+  mediaRecorder = new MediaRecorder(audioStream, { mimeType });
+  mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordingChunks.push(e.data); };
+  mediaRecorder.onstop = handleRecordingStop;
+  mediaRecorder.start(100); // collect in 100ms chunks
+  isRecording = true;
+
+  setOrb('listening');
+  setStatus('active', 'Listening...');
+  document.getElementById('ringSpin').classList.add('visible');
+  startVolViz();
+
+  // Silence detection — stop after 2.5s of low volume
+  startSilenceDetection();
+}
+
+function stopRecording() {
+  if (!isRecording || !mediaRecorder) return;
+  clearTimeout(silenceTimer);
+  isRecording = false;
+  mediaRecorder.stop();
+  stopVolViz();
+  document.getElementById('ringSpin').classList.remove('visible');
+}
+
+function startSilenceDetection() {
+  if (!analyser) return;
+  const bufferLength = analyser.frequencyBinCount;
+  const dataArray = new Uint8Array(bufferLength);
+  let silentFrames = 0;
+  const SILENCE_THRESHOLD = 10;
+  const SILENCE_FRAMES = 35; // ~2.3s at 60fps
+
+  function checkSilence() {
+    if (!isRecording) return;
+    analyser.getByteFrequencyData(dataArray);
+    const avg = dataArray.reduce((a, b) => a + b, 0) / bufferLength;
+    if (avg < SILENCE_THRESHOLD) {
+      silentFrames++;
+      if (silentFrames >= SILENCE_FRAMES) {
+        stopRecording();
+        return;
+      }
+    } else {
+      silentFrames = 0;
+    }
+    requestAnimationFrame(checkSilence);
+  }
+  requestAnimationFrame(checkSilence);
+}
+
+async function handleRecordingStop() {
+  if (recordingChunks.length === 0 || !sessionActive) return;
+
+  isProcessing = true;
+  setOrb('processing');
+  setStatus('active', 'Thinking...');
+  document.getElementById('interim').textContent = '';
+
+  const blob = new Blob(recordingChunks, { type: 'audio/webm' });
+  recordingChunks = [];
+
+  try {
+    // 1. TRANSCRIBE
+    const transcript = await transcribeAudio(blob);
+    if (!transcript || transcript.trim().length < 2) {
+      isProcessing = false;
+      startRecording(); // listen again
+      return;
+    }
+
+    addTranscript('user', transcript);
+    messages.push({ role: 'user', content: transcript });
+
+    // 2. CHAT
+    const { reply, booking } = await chatWithGPT();
+    messages.push({ role: 'assistant', content: reply });
+    addTranscript('aria', reply);
+    updateStepsFromContext();
+
+    // 3. BOOK if GPT decided
+    if (booking) {
+      bookingData = booking;
+      updateStep(4, 'Booking...');
+      const result = await bookEvent(booking);
+      if (result.success) {
+        showEventCard(result, booking);
+        updateStep(5, result.start);
+        const confirmText = `Your event has been created! ${booking.title || 'Meeting with ' + booking.name} on ${result.start}. I've added it to your Google Calendar. Is there anything else you need?`;
+        await ariaSpeak(confirmText);
+        addTranscript('aria', confirmText);
+      } else if (result.error === 'not_authorized') {
+        await ariaSpeak("I couldn't access your Google Calendar. Please connect it using the button on the left sidebar, then try again.");
+        addTranscript('aria', "I couldn't access your Google Calendar. Please connect it using the button on the left sidebar, then try again.");
+      } else {
+        await ariaSpeak("I ran into an issue creating the event. Could you try again?");
+        addTranscript('aria', "I ran into an issue creating the event. Could you try again?");
+      }
+    } else {
+      // 4. SPEAK reply
+      await ariaSpeak(reply);
+    }
+  } catch (err) {
+    console.error('Pipeline error:', err);
+    showToast('Something went wrong. Please try again.');
+  }
+
+  isProcessing = false;
+  if (sessionActive && !bookingData?.done) {
+    startRecording();
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// API CALLS
+// ═══════════════════════════════════════════════════════
+async function transcribeAudio(blob) {
+  const res = await fetch('/api/transcribe', {
+    method: 'POST',
+    headers: { 'Content-Type': blob.type },
+    body: blob,
+  });
+  const data = await res.json();
+  return data.transcript || '';
+}
+
+async function chatWithGPT() {
+  const res = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages }),
+  });
+  return res.json();
+}
+
+async function bookEvent(booking) {
+  const res = await fetch('/api/book', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(booking),
+  });
+  return res.json();
+}
+
+async function ariaSpeak(text) {
+  isSpeaking = true;
+  setOrb('speaking');
+  setStatus('speaking', 'Speaking...');
+
+  try {
+    const res = await fetch('/api/speak', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+
+    if (!res.ok) throw new Error('TTS failed');
+
+    const arrayBuf = await res.arrayBuffer();
+    await playAudioBuffer(arrayBuf);
+  } catch (err) {
+    console.error('TTS error:', err);
+    // Fallback to browser TTS
+    await browserTTS(text);
+  }
+
+  isSpeaking = false;
+  setOrb(sessionActive ? 'idle' : 'idle');
+  setStatus('active', 'Your turn...');
+}
+
+function playAudioBuffer(arrayBuf) {
+  return new Promise((resolve) => {
+    if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    audioContext.decodeAudioData(arrayBuf, (decoded) => {
+      const source = audioContext.createBufferSource();
+      source.buffer = decoded;
+      source.connect(audioContext.destination);
+      source.onended = resolve;
+      source.start(0);
+    }, () => resolve());
+  });
+}
+
+function browserTTS(text) {
+  return new Promise((resolve) => {
+    const u = new SpeechSynthesisUtterance(text);
+    u.onend = resolve;
+    u.onerror = resolve;
+    speechSynthesis.speak(u);
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+// VOLUME VISUALIZER
+// ═══════════════════════════════════════════════════════
+function setupAnalyser(stream) {
+  audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  analyser = audioContext.createAnalyser();
+  analyser.fftSize = 256;
+  const src = audioContext.createMediaStreamSource(stream);
+  src.connect(analyser);
+}
+
+function startVolViz() {
+  document.getElementById('volBars').classList.add('active');
+  const bars = ['vb1','vb2','vb3','vb4','vb5'].map(id => document.getElementById(id));
+  const bufLen = analyser ? analyser.frequencyBinCount : 128;
+  const data = new Uint8Array(bufLen);
+
+  volInterval = setInterval(() => {
+    if (!analyser) return;
+    analyser.getByteFrequencyData(data);
+    const slice = Math.floor(bufLen / 5);
+    bars.forEach((bar, i) => {
+      const val = data.slice(i*slice, (i+1)*slice).reduce((a,b)=>a+b,0) / slice;
+      const h = Math.max(4, Math.min(28, val * 0.3));
+      bar.style.height = h + 'px';
+      bar.style.background = isRecording ? 'var(--blue)' : 'var(--muted)';
+    });
+  }, 60);
+}
+
+function stopVolViz() {
+  clearInterval(volInterval);
+  document.getElementById('volBars').classList.remove('active');
+}
+
+function clearVolViz() {
+  stopVolViz();
+  if (audioContext) { audioContext.close(); audioContext = null; analyser = null; }
+}
+
+// ═══════════════════════════════════════════════════════
+// UI HELPERS
+// ═══════════════════════════════════════════════════════
+const orb = document.getElementById('orb');
+
+function setOrb(state) {
+  orb.classList.remove('listening','speaking','processing');
+  if (state === 'listening') orb.classList.add('listening');
+  else if (state === 'speaking') orb.classList.add('speaking');
+  else if (state === 'processing') orb.classList.add('processing');
+}
+
+function setStatus(type, msg) {
+  const tag = document.getElementById('statusTag');
+  const tagText = document.getElementById('statusTagText');
+  const msgEl = document.getElementById('statusMsg');
+  tag.className = 'status-tag';
+  if (type === 'active') tag.classList.add('active');
+  if (type === 'speaking') tag.classList.add('speaking-tag');
+  tagText.innerHTML = type === 'active' || type === 'speaking'
+    ? `<div class="blink"></div> ${msg}`
+    : msg;
+  msgEl.textContent = msg;
+}
+
+function setBtn(state) {
+  const row = document.getElementById('btnRow');
+  if (state === 'start') {
+    row.innerHTML = `<button class="btn btn-start" onclick="toggleCall()">Start Session</button>`;
+  } else {
+    row.innerHTML = `
+      <button class="btn btn-stop" onclick="endSession()">End Session</button>
+      <button class="btn btn-start" onclick="startRecording()" id="listenBtn">Speak Now</button>
+    `;
+  }
+}
+
+function addTranscript(who, text) {
+  const el = document.getElementById('transcript');
+  const interim = document.getElementById('interim');
+  const line = document.createElement('div');
+  line.className = `t-line ${who}`;
+  line.innerHTML = `<span class="t-who">${who === 'aria' ? 'Aria' : 'You'}</span><span class="t-text">${text}</span>`;
+  el.insertBefore(line, interim);
+  el.scrollTop = el.scrollHeight;
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 4000);
+}
+
+function showEventCard(result, booking) {
+  const card = document.getElementById('eventCard');
+  const rows = document.getElementById('eventRows');
+  rows.innerHTML = `
+    <div class="event-row"><span class="event-key">Event</span><span class="event-val">${result.eventTitle}</span></div>
+    <div class="event-row"><span class="event-key">When</span><span class="event-val">${result.start}</span></div>
+    <div class="event-row"><span class="event-key">Duration</span><span class="event-val">${booking.duration || 60} minutes</span></div>
+    <div class="event-row"><span class="event-key">Status</span><span class="event-val highlight">Confirmed ✓</span></div>
+  `;
+  document.getElementById('calLink').href = result.link || 'https://calendar.google.com';
+  card.classList.add('show');
+}
+
+// ═══════════════════════════════════════════════════════
+// STEP TRACKER
+// ═══════════════════════════════════════════════════════
+function updateStep(n, detail) {
+  document.querySelectorAll('.step').forEach(el => {
+    const s = parseInt(el.dataset.step);
+    el.classList.remove('active','done');
+    if (s < n) el.classList.add('done');
+    else if (s === n) el.classList.add('active');
+    // Update pip for done steps
+    if (s < n) el.querySelector('.step-pip').textContent = '✓';
+  });
+  currentStep = n;
+  if (detail) {
+    const detailEl = document.getElementById(`step${n}-detail`);
+    if (detailEl) detailEl.textContent = detail;
+  }
+}
+
+function updateStepsFromContext() {
+  // Infer step from message content
+  const allText = messages.map(m => m.content).join(' ').toLowerCase();
+  if (allText.includes('date') || allText.includes('time')) updateStep(Math.max(currentStep, 2));
+  if (allText.includes('title') || allText.includes('topic') || allText.includes('meeting')) updateStep(Math.max(currentStep, 3));
+  if (allText.includes('shall i') || allText.includes('go ahead') || allText.includes('confirm')) updateStep(Math.max(currentStep, 4));
+}
+</script>
+</body>
+</html>
