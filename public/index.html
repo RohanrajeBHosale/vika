@@ -570,6 +570,27 @@ body::before {
   .sidebar { display: none; }
   .main { padding: 1.5rem; }
 }
+
+.btn-hold {
+  background: var(--blue);
+  color: #fff;
+  box-shadow: 0 0 20px var(--blue-glow);
+  font-size: 0.7rem;
+  padding: 0.9rem 2.2rem;
+  border-radius: 2px;
+  border: none;
+  font-family: 'Space Mono', monospace;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: all 0.15s;
+}
+.btn-hold:active, .btn-hold.recording {
+  background: #e05;
+  box-shadow: 0 0 30px rgba(220,0,80,0.4);
+  transform: scale(0.97);
+}
 </style>
 </head>
 <body>
@@ -686,21 +707,7 @@ body::before {
 
     <!-- EVENT CARD -->
     <div class="event-card" id="eventCard">
-      <div class="event-card-header">
-        <div class="event-check">
-          <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
-        </div>
-        <div class="event-card-title">Event Booked Successfully</div>
-      </div>
-      <div class="event-rows" id="eventRows"></div>
-      <a href="#" id="calLink" class="event-open" target="_blank">Open in Google Calendar →</a>
-    </div>
-  </main>
-</div>
-
-<div class="toast" id="toast"></div>
-
-<script>
+      <div class="even<script>
 // ═══════════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════════
@@ -711,13 +718,11 @@ let recordingChunks = [];
 let isRecording = false;
 let isSpeaking = false;
 let isProcessing = false;
-let silenceTimer = null;
 let audioContext = null;
 let analyser = null;
 let volInterval = null;
-let messages = []; // full conversation history for GPT
+let messages = [];
 let currentStep = 1;
-let calendarConnected = false;
 let bookingData = null;
 
 // ═══════════════════════════════════════════════════════
@@ -732,9 +737,7 @@ function checkAuth() {
   const authDot = document.getElementById('authDot');
   const authText = document.getElementById('authText');
   const authLink = document.getElementById('authLink');
-
   if (params.get('auth') === 'success') {
-    calendarConnected = true;
     authDot.classList.add('connected');
     authText.textContent = 'Google Calendar connected';
     authLink.textContent = 'Reconnect →';
@@ -743,36 +746,22 @@ function checkAuth() {
     authDot.classList.add('error');
     authText.textContent = 'Connection failed — try again';
     window.history.replaceState({}, '', '/');
-  } else {
-    // Check cookie existence via a light request
-    fetch('/api/book', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({_check: true}) })
-      .then(r => {
-        if (r.status !== 401) {
-          calendarConnected = true;
-          authDot.classList.add('connected');
-          authText.textContent = 'Google Calendar connected';
-          authLink.textContent = 'Reconnect →';
-        }
-      }).catch(() => {});
   }
 }
 
 // ═══════════════════════════════════════════════════════
-// TOGGLE CALL
+// SESSION
 // ═══════════════════════════════════════════════════════
 async function toggleCall() {
-  if (sessionActive) {
-    endSession();
-  } else {
-    await startSession();
-  }
+  if (sessionActive) endSession();
+  else await startSession();
 }
 
 async function startSession() {
   try {
     audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
   } catch (err) {
-    showToast('Microphone access denied. Please allow mic and refresh.');
+    showToast('Microphone access denied. Allow mic and refresh.');
     return;
   }
 
@@ -785,23 +774,22 @@ async function startSession() {
   document.getElementById('transcript').innerHTML = '<div class="t-interim" id="interim"></div>';
   document.getElementById('eventCard').classList.remove('show');
 
+  setupAnalyser(audioStream);
   setBtn('end');
   setOrb('idle');
-  setStatus('active', 'Connected');
+  setStatus('active', 'Starting...');
 
-  // Setup audio analyser for volume viz
-  setupAnalyser(audioStream);
-
-  // Kick off with Aria's greeting
-  await ariaSpeak("Hi there! I'm Aria, your scheduling assistant. I'm here to help you book a calendar event. Could you start by telling me your name?");
-  addTranscript('aria', "Hi there! I'm Aria, your scheduling assistant. I'm here to help you book a calendar event. Could you start by telling me your name?");
-
-  // Start listening after greeting
+  const greeting = "Hi there! I'm Aria, your scheduling assistant. I'm here to help you book a calendar event. Hold the button and tell me your name!";
+  addTranscript('aria', greeting);
+  await ariaSpeak(greeting);
 }
 
 function endSession() {
   sessionActive = false;
-  stopRecording();
+  if (isRecording && mediaRecorder) mediaRecorder.stop();
+  isRecording = false;
+  isSpeaking = false;
+  isProcessing = false;
   if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
   clearVolViz();
   document.getElementById('mainArea').classList.remove('active-call');
@@ -812,228 +800,147 @@ function endSession() {
 }
 
 // ═══════════════════════════════════════════════════════
-// RECORDING
+// HOLD-TO-TALK RECORDING
 // ═══════════════════════════════════════════════════════
 function startRecording() {
-  if (isRecording || isSpeaking || isProcessing || !sessionActive) return;
+  if (!sessionActive || isSpeaking || isProcessing) return;
+  if (isRecording) return;
 
   recordingChunks = [];
+
   const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
     ? 'audio/webm;codecs=opus'
-    : 'audio/webm';
+    : MediaRecorder.isTypeSupported('audio/webm')
+    ? 'audio/webm'
+    : 'audio/ogg';
 
-  mediaRecorder = new MediaRecorder(audioStream, { mimeType });
-  mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordingChunks.push(e.data); };
+  try {
+    mediaRecorder = new MediaRecorder(audioStream, { mimeType });
+  } catch(e) {
+    mediaRecorder = new MediaRecorder(audioStream);
+  }
+
+  mediaRecorder.ondataavailable = e => {
+    if (e.data && e.data.size > 0) recordingChunks.push(e.data);
+  };
   mediaRecorder.onstop = handleRecordingStop;
-  mediaRecorder.start(250); // collect in 250ms chunks
+  mediaRecorder.start(100);
   isRecording = true;
 
   setOrb('listening');
-  setStatus('active', 'Listening... (speak now)');
+  setStatus('active', '🔴 Recording... release to send');
   document.getElementById('ringSpin').classList.add('visible');
   startVolViz();
-  startWebSpeech();
 
-  // Countdown display
-  let secs = 8;
-  const countEl = document.getElementById('statusTagText');
-  const countInterval = setInterval(() => {
-    secs--;
-    if (secs > 0 && isRecording) countEl.innerHTML = `<div class="blink"></div> Listening... ${secs}s`;
-    else clearInterval(countInterval);
-  }, 1000);
-
-  // Hard cap: stop after 8 seconds no matter what
-  silenceTimer = setTimeout(() => {
-    clearInterval(countInterval);
-    if (isRecording) stopRecording();
-  }, 8000);
-
-  // Silence detection — stop after ~1.5s of low volume
-  startSilenceDetection();
+  const btn = document.getElementById('holdBtn');
+  if (btn) btn.classList.add('recording');
 }
 
 function stopRecording() {
   if (!isRecording || !mediaRecorder) return;
-  clearTimeout(silenceTimer);
   isRecording = false;
-  stopWebSpeech();
-  mediaRecorder.stop();
+
+  const btn = document.getElementById('holdBtn');
+  if (btn) btn.classList.remove('recording');
+
   stopVolViz();
   document.getElementById('ringSpin').classList.remove('visible');
-}
 
-function startSilenceDetection() {
-  if (!analyser) return;
-  const bufferLength = analyser.frequencyBinCount;
-  const dataArray = new Uint8Array(bufferLength);
-  let silentFrames = 0;
-  const SILENCE_THRESHOLD = 8;
-  const SILENCE_FRAMES = 22; // ~1.5s at 60fps
-
-  function checkSilence() {
-    if (!isRecording) return;
-    analyser.getByteFrequencyData(dataArray);
-    const avg = dataArray.reduce((a, b) => a + b, 0) / bufferLength;
-    if (avg < SILENCE_THRESHOLD) {
-      silentFrames++;
-      if (silentFrames >= SILENCE_FRAMES) {
-        stopRecording();
-        return;
-      }
-    } else {
-      silentFrames = 0;
-    }
-    requestAnimationFrame(checkSilence);
-  }
-  requestAnimationFrame(checkSilence);
+  try { mediaRecorder.stop(); } catch(e) {}
 }
 
 async function handleRecordingStop() {
-  if (recordingChunks.length === 0 || !sessionActive) return;
+  if (!sessionActive) return;
+  if (recordingChunks.length === 0) {
+    setStatus('active', 'Hold the button and speak');
+    return;
+  }
+
+  const totalSize = recordingChunks.reduce((s, c) => s + c.size, 0);
+  if (totalSize < 500) {
+    setStatus('active', 'Too short — hold longer and speak clearly');
+    recordingChunks = [];
+    return;
+  }
 
   isProcessing = true;
   setOrb('processing');
   setStatus('active', 'Thinking...');
-  document.getElementById('interim').textContent = '';
 
-  const blob = new Blob(recordingChunks, { type: 'audio/webm' });
+  const mimeType = mediaRecorder.mimeType || 'audio/webm';
+  const blob = new Blob(recordingChunks, { type: mimeType });
   recordingChunks = [];
 
   try {
-    // 1. TRANSCRIBE
-    const transcript = await transcribeAudio(blob);
+    // 1. Transcribe
+    setStatus('active', 'Transcribing...');
+    const transcript = await transcribeAudio(blob, mimeType);
+
     if (!transcript || transcript.trim().length < 2) {
+      setStatus('active', "Didn't catch that — hold and speak again");
       isProcessing = false;
-      startRecording(); // listen again
       return;
     }
 
     addTranscript('user', transcript);
     messages.push({ role: 'user', content: transcript });
+    document.getElementById('interim').textContent = '';
 
-    // 2. CHAT
+    // 2. GPT-4o
+    setStatus('active', 'Thinking...');
     const { reply, booking } = await chatWithGPT();
     messages.push({ role: 'assistant', content: reply });
     addTranscript('aria', reply);
-    updateStepsFromContext();
+    updateStepsFromMessages();
 
-    // 3. BOOK if GPT decided
+    // 3. Book if ready
     if (booking) {
       bookingData = booking;
       updateStep(4, 'Booking...');
+      setStatus('active', 'Creating your event...');
       const result = await bookEvent(booking);
       if (result.success) {
         showEventCard(result, booking);
         updateStep(5, result.start);
-        const confirmText = `Your event has been created! ${booking.title || 'Meeting with ' + booking.name} on ${result.start}. I've added it to your Google Calendar. Is there anything else you need?`;
-        await ariaSpeak(confirmText);
-        addTranscript('aria', confirmText);
+        const done = `Your event has been created! "${result.eventTitle}" on ${result.start}. Check your Google Calendar!`;
+        addTranscript('aria', done);
+        await ariaSpeak(done);
+        bookingData.done = true;
       } else if (result.error === 'not_authorized') {
-        await ariaSpeak("I couldn't access your Google Calendar. Please connect it using the button on the left sidebar, then try again.");
-        addTranscript('aria', "I couldn't access your Google Calendar. Please connect it using the button on the left sidebar, then try again.");
+        const msg = "I can't access your Google Calendar. Please connect it using the sidebar, then try again.";
+        addTranscript('aria', msg);
+        await ariaSpeak(msg);
       } else {
-        await ariaSpeak("I ran into an issue creating the event. Could you try again?");
-        addTranscript('aria', "I ran into an issue creating the event. Could you try again?");
+        const msg = "I ran into an issue creating the event. Please try again.";
+        addTranscript('aria', msg);
+        await ariaSpeak(msg);
       }
     } else {
-      // 4. SPEAK reply
+      // 4. Speak reply
       await ariaSpeak(reply);
     }
   } catch (err) {
     console.error('Pipeline error:', err);
-    showToast('Something went wrong. Please try again.');
+    showToast('Something went wrong — try again');
+    setStatus('active', 'Error — try again');
   }
 
   isProcessing = false;
-  if (sessionActive && !bookingData?.done) {
-    startRecording();
-  }
+  if (sessionActive) setStatus('active', 'Hold the button to speak');
 }
 
 // ═══════════════════════════════════════════════════════
 // API CALLS
 // ═══════════════════════════════════════════════════════
-async function transcribeAudio(blob) {
-  // Try Web Speech API first (instant, no network latency)
-  if (window._webSpeechResult) {
-    const t = window._webSpeechResult;
-    window._webSpeechResult = null;
-    return t;
-  }
-  // Fallback to Whisper if Web Speech didn't capture anything
-  try {
-    const res = await fetch('/api/transcribe', {
-      method: 'POST',
-      headers: { 'Content-Type': blob.type },
-      body: blob,
-    });
-    const data = await res.json();
-    return data.transcript || '';
-  } catch(e) {
-    return '';
-  }
-}
-
-// Web Speech API — runs in parallel with MediaRecorder, captures transcript instantly
-let recognition = null;
-let webSpeechTranscript = '';
-
-function startWebSpeech() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) return; // not supported, will fall back to Whisper
-
-  recognition = new SR();
-  recognition.continuous = true;   // keep listening until we manually stop
-  recognition.interimResults = true;
-  recognition.lang = 'en-US';
-  recognition.maxAlternatives = 1;
-
-  let speechEndTimer = null;
-
-  recognition.onresult = (e) => {
-    let interim = '', final = '';
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      const t = e.results[i][0].transcript;
-      if (e.results[i].isFinal) final += t;
-      else interim += t;
-    }
-    const display = final || interim;
-    document.getElementById('interim').textContent = display;
-    if (final) {
-      webSpeechTranscript += ' ' + final;
-    }
-
-    // Reset the "done talking" timer every time we get new speech
-    clearTimeout(speechEndTimer);
-    speechEndTimer = setTimeout(() => {
-      // 1.2s of silence after last word = done
-      window._webSpeechResult = webSpeechTranscript.trim();
-      webSpeechTranscript = '';
-      stopRecording();
-    }, 1200);
-  };
-
-  recognition.onend = () => {
-    // continuous mode ended unexpectedly — restart if still recording
-    if (isRecording && !window._webSpeechResult) {
-      try { recognition.start(); } catch(e) {}
-    }
-  };
-
-  recognition.onerror = (e) => {
-    console.warn('Web Speech error:', e.error);
-    // Will fall back to Whisper
-  };
-
-  try { recognition.start(); } catch(e) {}
-}
-
-function stopWebSpeech() {
-  if (recognition) {
-    try { recognition.stop(); } catch(e) {}
-    recognition = null;
-  }
+async function transcribeAudio(blob, mimeType) {
+  const res = await fetch('/api/transcribe', {
+    method: 'POST',
+    headers: { 'Content-Type': mimeType || blob.type },
+    body: blob,
+  });
+  if (!res.ok) throw new Error(`Transcribe HTTP ${res.status}`);
+  const data = await res.json();
+  return data.transcript || '';
 }
 
 async function chatWithGPT() {
@@ -1042,6 +949,7 @@ async function chatWithGPT() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ messages }),
   });
+  if (!res.ok) throw new Error(`Chat HTTP ${res.status}`);
   return res.json();
 }
 
@@ -1057,7 +965,7 @@ async function bookEvent(booking) {
 async function ariaSpeak(text) {
   isSpeaking = true;
   setOrb('speaking');
-  setStatus('speaking', 'Speaking...');
+  setStatus('speaking', 'Aria is speaking...');
 
   try {
     const res = await fetch('/api/speak', {
@@ -1065,26 +973,27 @@ async function ariaSpeak(text) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
     });
-
-    if (!res.ok) throw new Error('TTS failed');
-
-    const arrayBuf = await res.arrayBuffer();
-    await playAudioBuffer(arrayBuf);
+    if (res.ok) {
+      const buf = await res.arrayBuffer();
+      await playAudioBuffer(buf);
+    } else {
+      await browserTTS(text);
+    }
   } catch (err) {
-    console.error('TTS error:', err);
-    // Fallback to browser TTS
+    console.warn('TTS error, using browser fallback:', err);
     await browserTTS(text);
   }
 
   isSpeaking = false;
-  setOrb(sessionActive ? 'idle' : 'idle');
-  setStatus('active', 'Your turn...');
+  setOrb('idle');
+  if (sessionActive) setStatus('active', 'Hold the button to speak');
 }
 
 function playAudioBuffer(arrayBuf) {
   return new Promise((resolve) => {
     if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    audioContext.decodeAudioData(arrayBuf, (decoded) => {
+    if (audioContext.state === 'suspended') audioContext.resume();
+    audioContext.decodeAudioData(arrayBuf.slice(0), (decoded) => {
       const source = audioContext.createBufferSource();
       source.buffer = decoded;
       source.connect(audioContext.destination);
@@ -1096,9 +1005,11 @@ function playAudioBuffer(arrayBuf) {
 
 function browserTTS(text) {
   return new Promise((resolve) => {
+    if (!window.speechSynthesis) return resolve();
     const u = new SpeechSynthesisUtterance(text);
     u.onend = resolve;
     u.onerror = resolve;
+    speechSynthesis.cancel();
     speechSynthesis.speak(u);
   });
 }
@@ -1107,11 +1018,13 @@ function browserTTS(text) {
 // VOLUME VISUALIZER
 // ═══════════════════════════════════════════════════════
 function setupAnalyser(stream) {
-  audioContext = new (window.AudioContext || window.webkitAudioContext)();
-  analyser = audioContext.createAnalyser();
-  analyser.fftSize = 256;
-  const src = audioContext.createMediaStreamSource(stream);
-  src.connect(analyser);
+  try {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 256;
+    const src = audioContext.createMediaStreamSource(stream);
+    src.connect(analyser);
+  } catch(e) { console.warn('Analyser setup failed', e); }
 }
 
 function startVolViz() {
@@ -1119,16 +1032,14 @@ function startVolViz() {
   const bars = ['vb1','vb2','vb3','vb4','vb5'].map(id => document.getElementById(id));
   const bufLen = analyser ? analyser.frequencyBinCount : 128;
   const data = new Uint8Array(bufLen);
-
   volInterval = setInterval(() => {
     if (!analyser) return;
     analyser.getByteFrequencyData(data);
     const slice = Math.floor(bufLen / 5);
     bars.forEach((bar, i) => {
       const val = data.slice(i*slice, (i+1)*slice).reduce((a,b)=>a+b,0) / slice;
-      const h = Math.max(4, Math.min(28, val * 0.3));
-      bar.style.height = h + 'px';
-      bar.style.background = isRecording ? 'var(--blue)' : 'var(--muted)';
+      bar.style.height = Math.max(4, Math.min(28, val * 0.35)) + 'px';
+      bar.style.background = 'var(--blue)';
     });
   }, 60);
 }
@@ -1140,7 +1051,7 @@ function stopVolViz() {
 
 function clearVolViz() {
   stopVolViz();
-  if (audioContext) { audioContext.close(); audioContext = null; analyser = null; }
+  if (audioContext) { try { audioContext.close(); } catch(e){} audioContext = null; analyser = null; }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1150,9 +1061,7 @@ const orb = document.getElementById('orb');
 
 function setOrb(state) {
   orb.classList.remove('listening','speaking','processing');
-  if (state === 'listening') orb.classList.add('listening');
-  else if (state === 'speaking') orb.classList.add('speaking');
-  else if (state === 'processing') orb.classList.add('processing');
+  if (state !== 'idle') orb.classList.add(state);
 }
 
 function setStatus(type, msg) {
@@ -1162,9 +1071,8 @@ function setStatus(type, msg) {
   tag.className = 'status-tag';
   if (type === 'active') tag.classList.add('active');
   if (type === 'speaking') tag.classList.add('speaking-tag');
-  tagText.innerHTML = type === 'active' || type === 'speaking'
-    ? `<div class="blink"></div> ${msg}`
-    : msg;
+  tagText.innerHTML = (type === 'active' || type === 'speaking')
+    ? `<div class="blink"></div> ${msg}` : msg;
   msgEl.textContent = msg;
 }
 
@@ -1175,8 +1083,11 @@ function setBtn(state) {
   } else {
     row.innerHTML = `
       <button class="btn btn-stop" onclick="endSession()">End Session</button>
-      <button class="btn btn-start" onclick="startRecording()" id="listenBtn">Speak Now</button>
-    `;
+      <button class="btn btn-hold" id="holdBtn"
+        onmousedown="startRecording()" onmouseup="stopRecording()"
+        ontouchstart="startRecording()" ontouchend="stopRecording()">
+        🎤 Hold to Speak
+      </button>`;
   }
 }
 
@@ -1185,9 +1096,13 @@ function addTranscript(who, text) {
   const interim = document.getElementById('interim');
   const line = document.createElement('div');
   line.className = `t-line ${who}`;
-  line.innerHTML = `<span class="t-who">${who === 'aria' ? 'Aria' : 'You'}</span><span class="t-text">${text}</span>`;
+  line.innerHTML = `<span class="t-who">${who === 'aria' ? 'Aria' : 'You'}</span><span class="t-text">${escHtml(text)}</span>`;
   el.insertBefore(line, interim);
   el.scrollTop = el.scrollHeight;
+}
+
+function escHtml(t) {
+  return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 function showToast(msg) {
@@ -1201,8 +1116,8 @@ function showEventCard(result, booking) {
   const card = document.getElementById('eventCard');
   const rows = document.getElementById('eventRows');
   rows.innerHTML = `
-    <div class="event-row"><span class="event-key">Event</span><span class="event-val">${result.eventTitle}</span></div>
-    <div class="event-row"><span class="event-key">When</span><span class="event-val">${result.start}</span></div>
+    <div class="event-row"><span class="event-key">Event</span><span class="event-val">${escHtml(result.eventTitle)}</span></div>
+    <div class="event-row"><span class="event-key">When</span><span class="event-val">${escHtml(result.start)}</span></div>
     <div class="event-row"><span class="event-key">Duration</span><span class="event-val">${booking.duration || 60} minutes</span></div>
     <div class="event-row"><span class="event-key">Status</span><span class="event-val highlight">Confirmed ✓</span></div>
   `;
@@ -1217,14 +1132,23 @@ function updateStep(n, detail) {
   document.querySelectorAll('.step').forEach(el => {
     const s = parseInt(el.dataset.step);
     el.classList.remove('active','done');
-    if (s < n) el.classList.add('done');
+    if (s < n) { el.classList.add('done'); el.querySelector('.step-pip').textContent = '✓'; }
     else if (s === n) el.classList.add('active');
-    // Update pip for done steps
-    if (s < n) el.querySelector('.step-pip').textContent = '✓';
   });
   currentStep = n;
   if (detail) {
-    const detailEl = document.getElementById(`step${n}-detail`);
+    const el = document.getElementById(`step${n}-detail`);
+    if (el) el.textContent = detail;
+  }
+}
+
+function updateStepsFromMessages() {
+  const all = messages.map(m => m.content).join(' ').toLowerCase();
+  if (currentStep < 2 && (all.includes('date') || all.includes('when'))) updateStep(2);
+  if (currentStep < 3 && (all.includes('title') || all.includes('topic') || all.includes('meeting'))) updateStep(3);
+  if (currentStep < 4 && (all.includes('shall i') || all.includes('go ahead') || all.includes('confirm'))) updateStep(4);
+}
+</script>ById(`step${n}-detail`);
     if (detailEl) detailEl.textContent = detail;
   }
 }
