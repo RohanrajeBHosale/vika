@@ -13,6 +13,10 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
   try {
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({ error: "OPENAI_API_KEY is not set" });
+    }
+
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
     const chunks = [];
@@ -31,16 +35,39 @@ export default async function handler(req, res) {
 
     const file = await toFile(buffer, `audio.${ext}`, { type: contentType });
 
-    const result = await openai.audio.transcriptions.create({
-      file,
-      model: "whisper-1",
-      language: "en",
-    });
+    // Keep each attempt short so the function never hits Vercel's 30s ceiling.
+    async function transcribeWithTimeout(timeoutMs) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        return await openai.audio.transcriptions.create(
+          {
+            file,
+            model: "whisper-1",
+            language: "en",
+          },
+          { signal: controller.signal }
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    let result;
+    try {
+      result = await transcribeWithTimeout(12000);
+    } catch (firstErr) {
+      console.warn("Transcribe attempt 1 failed, retrying once:", firstErr?.message || firstErr);
+      result = await transcribeWithTimeout(12000);
+    }
 
     console.log("Transcript:", result.text);
     res.json({ transcript: result.text });
   } catch (err) {
     console.error("Transcribe error:", err);
-    res.status(500).json({ error: err.message });
+    const msg = err?.name === "AbortError"
+      ? "Transcription timed out. Please try a shorter clip."
+      : (err?.message || "Transcription failed");
+    res.status(504).json({ error: msg });
   }
 }
