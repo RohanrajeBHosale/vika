@@ -832,6 +832,7 @@ function startRecording() {
   setStatus('active', 'Listening... (speak now)');
   document.getElementById('ringSpin').classList.add('visible');
   startVolViz();
+  startWebSpeech();
 
   // Countdown display
   let secs = 8;
@@ -856,6 +857,7 @@ function stopRecording() {
   if (!isRecording || !mediaRecorder) return;
   clearTimeout(silenceTimer);
   isRecording = false;
+  stopWebSpeech();
   mediaRecorder.stop();
   stopVolViz();
   document.getElementById('ringSpin').classList.remove('visible');
@@ -953,13 +955,85 @@ async function handleRecordingStop() {
 // API CALLS
 // ═══════════════════════════════════════════════════════
 async function transcribeAudio(blob) {
-  const res = await fetch('/api/transcribe', {
-    method: 'POST',
-    headers: { 'Content-Type': blob.type },
-    body: blob,
-  });
-  const data = await res.json();
-  return data.transcript || '';
+  // Try Web Speech API first (instant, no network latency)
+  if (window._webSpeechResult) {
+    const t = window._webSpeechResult;
+    window._webSpeechResult = null;
+    return t;
+  }
+  // Fallback to Whisper if Web Speech didn't capture anything
+  try {
+    const res = await fetch('/api/transcribe', {
+      method: 'POST',
+      headers: { 'Content-Type': blob.type },
+      body: blob,
+    });
+    const data = await res.json();
+    return data.transcript || '';
+  } catch(e) {
+    return '';
+  }
+}
+
+// Web Speech API — runs in parallel with MediaRecorder, captures transcript instantly
+let recognition = null;
+let webSpeechTranscript = '';
+
+function startWebSpeech() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return; // not supported, will fall back to Whisper
+
+  recognition = new SR();
+  recognition.continuous = true;   // keep listening until we manually stop
+  recognition.interimResults = true;
+  recognition.lang = 'en-US';
+  recognition.maxAlternatives = 1;
+
+  let speechEndTimer = null;
+
+  recognition.onresult = (e) => {
+    let interim = '', final = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) final += t;
+      else interim += t;
+    }
+    const display = final || interim;
+    document.getElementById('interim').textContent = display;
+    if (final) {
+      webSpeechTranscript += ' ' + final;
+    }
+
+    // Reset the "done talking" timer every time we get new speech
+    clearTimeout(speechEndTimer);
+    speechEndTimer = setTimeout(() => {
+      // 1.2s of silence after last word = done
+      window._webSpeechResult = webSpeechTranscript.trim();
+      webSpeechTranscript = '';
+      stopRecording();
+    }, 1200);
+  };
+
+  recognition.onend = () => {
+    // continuous mode ended unexpectedly — restart if still recording
+    if (isRecording && !window._webSpeechResult) {
+      try { recognition.start(); } catch(e) {}
+    }
+  };
+
+  recognition.onerror = (e) => {
+    console.warn('Web Speech error:', e.error);
+    // Will fall back to Whisper
+  };
+
+  try { recognition.start(); } catch(e) {}
+}
+
+function stopWebSpeech() {
+  if (recognition) {
+    try { recognition.stop(); } catch(e) {}
+    recognition = null;
+  }
 }
 
 async function chatWithGPT() {
