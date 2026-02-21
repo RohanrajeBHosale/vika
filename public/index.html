@@ -945,8 +945,14 @@ async function handleRecordingStop() {
     }
   } catch (err) {
     console.error('Pipeline error:', err);
-    showToast('Something went wrong — try again');
-    setStatus('active', 'Error — try again');
+    const msg = String(err?.message || err || '');
+    if (msg.includes('Transcribe HTTP 504')) {
+      showToast('Transcription timed out. Speak for 2-5 seconds, then try again.');
+      setStatus('active', 'Transcription timed out — try again');
+    } else {
+      showToast('Something went wrong — try again');
+      setStatus('active', 'Error — try again');
+    }
   }
 
   isProcessing = false;
@@ -962,8 +968,11 @@ async function transcribeAudio(blob, mimeType) {
     headers: { 'Content-Type': mimeType || blob.type },
     body: blob,
   });
-  if (!res.ok) throw new Error(`Transcribe HTTP ${res.status}`);
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const reason = data.error ? `: ${data.error}` : '';
+    throw new Error(`Transcribe HTTP ${res.status}${reason}`);
+  }
   return data.transcript || '';
 }
 
