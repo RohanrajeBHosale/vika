@@ -1,9 +1,5 @@
 // api/chat.js
-// Receives conversation history + user message → GPT-4o → returns reply + extracted booking data
-
-import OpenAI from "openai";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// Receives conversation history + user message → Groq chat model → returns reply + extracted booking data
 
 const SYSTEM_PROMPT = `You are Aria, a warm and efficient voice scheduling assistant.
 Your ONLY job is to collect the details needed to create a calendar event, then confirm and book it.
@@ -39,14 +35,36 @@ export default async function handler(req, res) {
   }
 
   try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
-      temperature: 0.6,
-      max_tokens: 150,
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: "GROQ_API_KEY is not set" });
+    }
+
+    const model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
+        temperature: 0.6,
+        max_tokens: 150,
+      }),
     });
 
-    const reply = completion.choices[0].message.content.trim();
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const errMsg = data?.error?.message || `Groq HTTP ${response.status}`;
+      return res.status(response.status).json({ error: errMsg, code: data?.error?.code || null });
+    }
+
+    const reply = data?.choices?.[0]?.message?.content?.trim();
+    if (!reply) {
+      return res.status(502).json({ error: "Groq returned an empty response" });
+    }
 
     // Check if GPT included a BOOKING payload
     const bookingMatch = reply.match(/BOOKING:(\{.+\})/);
@@ -69,12 +87,6 @@ export default async function handler(req, res) {
     res.json({ reply: spokenReply, booking });
   } catch (err) {
     console.error("Chat error:", err);
-    if (err?.status === 429 || err?.code === "insufficient_quota" || err?.type === "insufficient_quota") {
-      return res.status(429).json({
-        error: "OpenAI quota exceeded. Please add billing/credits, then try again.",
-        code: "insufficient_quota",
-      });
-    }
     res.status(500).json({ error: err?.message || "Chat failed" });
   }
 }
