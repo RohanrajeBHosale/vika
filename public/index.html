@@ -742,6 +742,8 @@ let volInterval = null;
 let messages = [];
 let currentStep = 1;
 let bookingData = null;
+let speechRecognition = null;
+let speechTextFinal = '';
 
 // ═══════════════════════════════════════════════════════
 // INIT
@@ -804,6 +806,9 @@ async function startSession() {
 
 function endSession() {
   sessionActive = false;
+  if (speechRecognition) {
+    try { speechRecognition.stop(); } catch(e) {}
+  }
   if (isRecording && mediaRecorder) mediaRecorder.stop();
   isRecording = false;
   isSpeaking = false;
@@ -896,53 +901,9 @@ async function handleRecordingStop() {
   recordingChunks = [];
 
   try {
-    // 1. Transcribe
     setStatus('active', 'Transcribing...');
     const transcript = await transcribeAudio(blob, mimeType);
-
-    if (!transcript || transcript.trim().length < 2) {
-      setStatus('active', "Didn't catch that — hold and speak again");
-      isProcessing = false;
-      return;
-    }
-
-    addTranscript('user', transcript);
-    messages.push({ role: 'user', content: transcript });
-    document.getElementById('interim').textContent = '';
-
-    // 2. GPT-4o
-    setStatus('active', 'Thinking...');
-    const { reply, booking } = await chatWithGPT();
-    messages.push({ role: 'assistant', content: reply });
-    addTranscript('aria', reply);
-    updateStepsFromMessages();
-
-    // 3. Book if ready
-    if (booking) {
-      bookingData = booking;
-      updateStep(4, 'Booking...');
-      setStatus('active', 'Creating your event...');
-      const result = await bookEvent(booking);
-      if (result.success) {
-        showEventCard(result, booking);
-        updateStep(5, result.start);
-        const done = `Your event has been created! "${result.eventTitle}" on ${result.start}. Check your Google Calendar!`;
-        addTranscript('aria', done);
-        await ariaSpeak(done);
-        bookingData.done = true;
-      } else if (result.error === 'not_authorized') {
-        const msg = "I can't access your Google Calendar. Please connect it using the sidebar, then try again.";
-        addTranscript('aria', msg);
-        await ariaSpeak(msg);
-      } else {
-        const msg = "I ran into an issue creating the event. Please try again.";
-        addTranscript('aria', msg);
-        await ariaSpeak(msg);
-      }
-    } else {
-      // 4. Speak reply
-      await ariaSpeak(reply);
-    }
+    await processTranscript(transcript);
   } catch (err) {
     console.error('Pipeline error:', err);
     const msg = String(err?.message || err || '');
@@ -974,6 +935,49 @@ async function transcribeAudio(blob, mimeType) {
     throw new Error(`Transcribe HTTP ${res.status}${reason}`);
   }
   return data.transcript || '';
+}
+
+async function processTranscript(transcript) {
+  if (!transcript || transcript.trim().length < 2) {
+    setStatus('active', "Didn't catch that — try again");
+    isProcessing = false;
+    return;
+  }
+
+  addTranscript('user', transcript);
+  messages.push({ role: 'user', content: transcript });
+  document.getElementById('interim').textContent = '';
+
+  setStatus('active', 'Thinking...');
+  const { reply, booking } = await chatWithGPT();
+  messages.push({ role: 'assistant', content: reply });
+  addTranscript('aria', reply);
+  updateStepsFromMessages();
+
+  if (booking) {
+    bookingData = booking;
+    updateStep(4, 'Booking...');
+    setStatus('active', 'Creating your event...');
+    const result = await bookEvent(booking);
+    if (result.success) {
+      showEventCard(result, booking);
+      updateStep(5, result.start);
+      const done = `Your event has been created! "${result.eventTitle}" on ${result.start}. Check your Google Calendar!`;
+      addTranscript('aria', done);
+      await ariaSpeak(done);
+      bookingData.done = true;
+    } else if (result.error === 'not_authorized') {
+      const msg = "I can't access your Google Calendar. Please connect it using the sidebar, then try again.";
+      addTranscript('aria', msg);
+      await ariaSpeak(msg);
+    } else {
+      const msg = "I ran into an issue creating the event. Please try again.";
+      addTranscript('aria', msg);
+      await ariaSpeak(msg);
+    }
+  } else {
+    await ariaSpeak(reply);
+  }
 }
 
 async function chatWithGPT() {
@@ -1124,8 +1128,100 @@ function setBtn(state) {
 
 function toggleRecording() {
   if (!sessionActive || isSpeaking || isProcessing) return;
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (SpeechRecognition) {
+    if (isRecording) stopSpeechRecording();
+    else startSpeechRecording();
+    return;
+  }
   if (isRecording) stopRecording();
   else startRecording();
+}
+
+function setRecordingButton(active) {
+  const btn = document.getElementById('holdBtn');
+  if (!btn) return;
+  if (active) {
+    btn.classList.add('recording');
+    btn.textContent = 'Stop & Send';
+  } else {
+    btn.classList.remove('recording');
+    btn.textContent = 'Speak Now';
+  }
+}
+
+function startSpeechRecording() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) return;
+  if (!speechRecognition) {
+    speechRecognition = new SpeechRecognition();
+    speechRecognition.lang = 'en-US';
+    speechRecognition.interimResults = true;
+    speechRecognition.continuous = true;
+  }
+
+  speechTextFinal = '';
+  isRecording = true;
+  setRecordingButton(true);
+  setOrb('listening');
+  setStatus('active', 'Listening...');
+  document.getElementById('ringSpin').classList.add('visible');
+  startVolViz();
+
+  speechRecognition.onresult = (event) => {
+    let interim = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const t = event.results[i][0].transcript || '';
+      if (event.results[i].isFinal) speechTextFinal += `${t} `;
+      else interim += t;
+    }
+    document.getElementById('interim').textContent = interim;
+  };
+
+  speechRecognition.onerror = () => {
+    isRecording = false;
+    setRecordingButton(false);
+    setOrb('idle');
+    stopVolViz();
+    document.getElementById('ringSpin').classList.remove('visible');
+  };
+
+  speechRecognition.onend = async () => {
+    if (!sessionActive) return;
+    if (isRecording) return;
+    stopVolViz();
+    document.getElementById('ringSpin').classList.remove('visible');
+    isProcessing = true;
+    setOrb('processing');
+    setStatus('active', 'Thinking...');
+    try {
+      const interim = document.getElementById('interim').textContent || '';
+      const transcript = `${speechTextFinal} ${interim}`.trim();
+      await processTranscript(transcript);
+    } catch (err) {
+      console.error('Speech pipeline error:', err);
+      showToast('Something went wrong — try again');
+      setStatus('active', 'Error — try again');
+    }
+    isProcessing = false;
+    if (sessionActive) setStatus('active', 'Click Speak Now to talk');
+  };
+
+  try {
+    speechRecognition.start();
+  } catch (e) {
+    showToast('Could not start speech recognition. Try again.');
+    isRecording = false;
+    setRecordingButton(false);
+  }
+}
+
+function stopSpeechRecording() {
+  if (!speechRecognition || !isRecording) return;
+  isRecording = false;
+  setRecordingButton(false);
+  setOrb('idle');
+  try { speechRecognition.stop(); } catch(e) {}
 }
 
 function addTranscript(who, text) {
