@@ -36,14 +36,14 @@ export default async function handler(req, res) {
     const file = await toFile(buffer, `audio.${ext}`, { type: contentType });
 
     // Keep each attempt short so the function never hits Vercel's 30s ceiling.
-    async function transcribeWithTimeout(timeoutMs) {
+    async function transcribeWithTimeout(model, timeoutMs) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         return await openai.audio.transcriptions.create(
           {
             file,
-            model: "whisper-1",
+            model,
             language: "en",
           },
           { signal: controller.signal }
@@ -55,10 +55,11 @@ export default async function handler(req, res) {
 
     let result;
     try {
-      result = await transcribeWithTimeout(12000);
+      // Faster model first to reduce Vercel runtime timeouts.
+      result = await transcribeWithTimeout("gpt-4o-mini-transcribe", 12000);
     } catch (firstErr) {
-      console.warn("Transcribe attempt 1 failed, retrying once:", firstErr?.message || firstErr);
-      result = await transcribeWithTimeout(12000);
+      console.warn("Fast transcribe attempt failed, falling back to whisper-1:", firstErr?.message || firstErr);
+      result = await transcribeWithTimeout("whisper-1", 12000);
     }
 
     console.log("Transcript:", result.text);

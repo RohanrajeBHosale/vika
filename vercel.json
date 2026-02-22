@@ -3,7 +3,7 @@
   "buildCommand": "npm install",
   "outputDirectory": "public",
   "functions": {
-    "api/transcribe.js": { "maxDuration": 30 },
+    "api/transcribe.js": { "maxDuration": 60 },
     "api/chat.js": { "maxDuration": 30 },
     "api/speak.js": { "maxDuration": 30 },
     "api/book.js": { "maxDuration": 30 },
