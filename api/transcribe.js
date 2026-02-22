@@ -1,5 +1,4 @@
 // api/transcribe.js
-import OpenAI from "openai";
 import { toFile } from "openai/uploads";
 
 export const config = {
@@ -17,8 +16,6 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: "OPENAI_API_KEY is not set" });
     }
 
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const buffer = Buffer.concat(chunks);
@@ -33,37 +30,45 @@ export default async function handler(req, res) {
     const ext = contentType.includes("ogg") ? "ogg" :
                 contentType.includes("mp4") ? "mp4" : "webm";
 
-    const file = await toFile(buffer, `audio.${ext}`, { type: contentType });
+    async function transcribeWithFetch(model, timeoutMs) {
+      const form = new FormData();
+      const audioFile = await toFile(buffer, `audio.${ext}`, { type: contentType });
+      form.append("file", audioFile);
+      form.append("model", model);
+      form.append("language", "en");
 
-    // Keep each attempt short so the function never hits Vercel's 30s ceiling.
-    async function transcribeWithTimeout(model, timeoutMs) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
+
       try {
-        return await openai.audio.transcriptions.create(
-          {
-            file,
-            model,
-            language: "en",
-          },
-          { signal: controller.signal }
-        );
+        const resp = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+          body: form,
+          signal: controller.signal,
+        });
+
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          const msg = data?.error?.message || `OpenAI HTTP ${resp.status}`;
+          throw new Error(msg);
+        }
+        return data;
       } finally {
         clearTimeout(timer);
       }
     }
 
-    let result;
+    let data;
     try {
-      // Faster model first to reduce Vercel runtime timeouts.
-      result = await transcribeWithTimeout("gpt-4o-mini-transcribe", 12000);
+      data = await transcribeWithFetch("gpt-4o-mini-transcribe", 18000);
     } catch (firstErr) {
-      console.warn("Fast transcribe attempt failed, falling back to whisper-1:", firstErr?.message || firstErr);
-      result = await transcribeWithTimeout("whisper-1", 12000);
+      console.warn("Fast transcribe failed, fallback to whisper-1:", firstErr?.message || firstErr);
+      data = await transcribeWithFetch("whisper-1", 18000);
     }
 
-    console.log("Transcript:", result.text);
-    res.json({ transcript: result.text });
+    console.log("Transcript:", data.text || "");
+    res.json({ transcript: data.text || "" });
   } catch (err) {
     console.error("Transcribe error:", err);
     const msg = err?.name === "AbortError"
