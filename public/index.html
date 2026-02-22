@@ -973,10 +973,11 @@ async function processTranscript(transcript) {
 }
 
 async function chatWithGPT() {
+  const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages }),
+    body: JSON.stringify({ messages, timeZone: browserTz }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
