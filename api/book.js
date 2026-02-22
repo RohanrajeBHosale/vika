@@ -14,13 +14,29 @@ function parseCookies(cookieHeader) {
   );
 }
 
+function addMinutesLocal(dateStr, timeStr, minutesToAdd) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const [hh, mm] = timeStr.split(":").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d, hh, mm, 0));
+  dt.setUTCMinutes(dt.getUTCMinutes() + minutesToAdd);
+  const yyyy = dt.getUTCFullYear();
+  const MM = String(dt.getUTCMonth() + 1).padStart(2, "0");
+  const DD = String(dt.getUTCDate()).padStart(2, "0");
+  const HH = String(dt.getUTCHours()).padStart(2, "0");
+  const MIN = String(dt.getUTCMinutes()).padStart(2, "0");
+  return `${yyyy}-${MM}-${DD}T${HH}:${MIN}:00`;
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
-  const { name, date, time, title, duration = 60 } = req.body;
+  const { name, date, time, title, duration = 60, timeZone } = req.body;
 
   if (!name || !date || !time) {
     return res.status(400).json({ error: "name, date, and time are required" });
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) {
+    return res.status(400).json({ error: "date must be YYYY-MM-DD and time must be HH:MM" });
   }
 
   // Get tokens from cookie
@@ -44,22 +60,24 @@ export default async function handler(req, res) {
     const calendar = google.calendar({ version: "v3", auth: oauth2Client });
 
     const eventTitle = title || `Meeting with ${name}`;
+    const tz = timeZone || "America/New_York";
+    const durationMin = Number.isFinite(Number(duration)) ? Number(duration) : 60;
+    const safeDuration = Math.max(15, Math.min(480, durationMin));
 
-    // Build start/end datetimes
-    const startDT = new Date(`${date}T${time}:00`);
-    if (isNaN(startDT)) throw new Error(`Invalid date/time: ${date} ${time}`);
-    const endDT = new Date(startDT.getTime() + duration * 60000);
+    // Keep local wall-clock time exactly as provided by the user and apply timezone explicitly.
+    const startLocal = `${date}T${time}:00`;
+    const endLocal = addMinutesLocal(date, time, safeDuration);
 
     const event = {
       summary: eventTitle,
       description: `Scheduled via Aria — Voice Scheduling Agent\nRequested by: ${name}`,
       start: {
-        dateTime: startDT.toISOString(),
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "America/New_York",
+        dateTime: startLocal,
+        timeZone: tz,
       },
       end: {
-        dateTime: endDT.toISOString(),
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "America/New_York",
+        dateTime: endLocal,
+        timeZone: tz,
       },
       reminders: {
         useDefault: false,
@@ -80,14 +98,8 @@ export default async function handler(req, res) {
       eventId: created.data.id,
       eventTitle,
       link: created.data.htmlLink,
-      start: startDT.toLocaleString("en-US", {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-        year: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-      }),
+      start: `${date} ${time}`,
+      timeZone: tz,
     });
   } catch (err) {
     console.error("Book error:", err);

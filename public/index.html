@@ -988,10 +988,11 @@ async function chatWithGPT() {
 }
 
 async function bookEvent(booking) {
+  const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
   const res = await fetch('/api/book', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(booking),
+    body: JSON.stringify({ ...booking, timeZone: browserTz }),
   });
   return res.json();
 }
@@ -1262,7 +1263,7 @@ function showEventCard(result, booking) {
   const rows = document.getElementById('eventRows');
   rows.innerHTML = `
     <div class="event-row"><span class="event-key">Event</span><span class="event-val">${escHtml(result.eventTitle)}</span></div>
-    <div class="event-row"><span class="event-key">When</span><span class="event-val">${escHtml(result.start)}</span></div>
+    <div class="event-row"><span class="event-key">When</span><span class="event-val">${escHtml(result.start)} ${result.timeZone ? `(${escHtml(result.timeZone)})` : ''}</span></div>
     <div class="event-row"><span class="event-key">Duration</span><span class="event-val">${booking.duration || 60} minutes</span></div>
     <div class="event-row"><span class="event-key">Status</span><span class="event-val highlight">Confirmed ✓</span></div>
   `;
