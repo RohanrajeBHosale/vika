@@ -69,6 +69,12 @@ export default async function handler(req, res) {
     res.json({ reply: spokenReply, booking });
   } catch (err) {
     console.error("Chat error:", err);
-    res.status(500).json({ error: err.message });
+    if (err?.status === 429 || err?.code === "insufficient_quota" || err?.type === "insufficient_quota") {
+      return res.status(429).json({
+        error: "OpenAI quota exceeded. Please add billing/credits, then try again.",
+        code: "insufficient_quota",
+      });
+    }
+    res.status(500).json({ error: err?.message || "Chat failed" });
   }
 }

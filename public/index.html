@@ -905,15 +905,7 @@ async function handleRecordingStop() {
     const transcript = await transcribeAudio(blob, mimeType);
     await processTranscript(transcript);
   } catch (err) {
-    console.error('Pipeline error:', err);
-    const msg = String(err?.message || err || '');
-    if (msg.includes('Transcribe HTTP 504')) {
-      showToast('Transcription timed out. Speak for 2-5 seconds, then try again.');
-      setStatus('active', 'Transcription timed out — try again');
-    } else {
-      showToast('Something went wrong — try again');
-      setStatus('active', 'Error — try again');
-    }
+    handlePipelineError(err);
   }
 
   isProcessing = false;
@@ -986,8 +978,13 @@ async function chatWithGPT() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ messages }),
   });
-  if (!res.ok) throw new Error(`Chat HTTP ${res.status}`);
-  return res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const reason = data.error ? `: ${data.error}` : '';
+    const code = data.code ? ` [${data.code}]` : '';
+    throw new Error(`Chat HTTP ${res.status}${code}${reason}`);
+  }
+  return data;
 }
 
 async function bookEvent(booking) {
@@ -1199,9 +1196,7 @@ function startSpeechRecording() {
       const transcript = `${speechTextFinal} ${interim}`.trim();
       await processTranscript(transcript);
     } catch (err) {
-      console.error('Speech pipeline error:', err);
-      showToast('Something went wrong — try again');
-      setStatus('active', 'Error — try again');
+      handlePipelineError(err);
     }
     isProcessing = false;
     if (sessionActive) setStatus('active', 'Click Speak Now to talk');
@@ -1222,6 +1217,23 @@ function stopSpeechRecording() {
   setRecordingButton(false);
   setOrb('idle');
   try { speechRecognition.stop(); } catch(e) {}
+}
+
+function handlePipelineError(err) {
+  console.error('Pipeline error:', err);
+  const msg = String(err?.message || err || '');
+  if (msg.includes('Transcribe HTTP 504')) {
+    showToast('Transcription timed out. Speak for 2-5 seconds, then try again.');
+    setStatus('active', 'Transcription timed out — try again');
+    return;
+  }
+  if (msg.includes('Chat HTTP 429') || msg.includes('insufficient_quota')) {
+    showToast('OpenAI quota exceeded. Add billing/credits, then retry.');
+    setStatus('active', 'OpenAI quota exceeded');
+    return;
+  }
+  showToast('Something went wrong — try again');
+  setStatus('active', 'Error — try again');
 }
 
 function addTranscript(who, text) {
