@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "googleapis": "^140.0.0",
+    "groq-sdk": "^0.37.0",
     "openai": "^4.28.0"
   }
 }
